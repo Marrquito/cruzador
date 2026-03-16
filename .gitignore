@@ -14,8 +14,8 @@ venv/
 env/
 ENV/
 
-# Streamlit
-.streamlit/
+# Streamlit — ignora apenas o arquivo de secrets, não a pasta inteira
+.streamlit/secrets.toml
 
 # Credenciais e configuração sensível
 config.yaml
@@ -36,3 +36,6 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Examples
+*.example
