@@ -5,7 +5,6 @@ Plataforma local para cruzamento e análise de planilhas de vendas. Permite iden
 ## Requisitos
 
 - Python 3.11+
-- Arquivos CSV exportados do Hotmart (ou formato compatível)
 
 ## Instalação
 
