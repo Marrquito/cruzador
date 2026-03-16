@@ -1,4 +1,3 @@
-import io
 import os
 
 import pandas as pd
@@ -22,7 +21,19 @@ from core.loader import (
     get_utm_options,
 )
 from core.analyzer import crossref, filter_by_status
-from core.charts import funnel_chart, sequence_pie, timeline_scatter, products_bar
+from core.charts import (
+    funnel_chart, sequence_pie, timeline_scatter, products_bar,
+    days_histogram, tags_distribution_bar, utm_content_bar,
+    first_entry_bar, utm_funnel_bar,
+)
+from core.cross_analyzer import (
+    analysis_lead_to_purchase,
+    analysis_avg_tags_per_buyer,
+    analysis_leads_by_utm_content,
+    analysis_first_entry_to_sales,
+    analysis_utm_funnel,
+    get_utm_values,
+)
 
 # ── Configuração da página ────────────────────────────────────────────────────
 st.set_page_config(
@@ -172,11 +183,12 @@ if df_vendas.empty and df_leads.empty:
 # ── Layout principal ──────────────────────────────────────────────────────────
 st.title("🔀 Cruzador de Dados")
 
-tab_overview, tab_cross, tab_vendas, tab_leads = st.tabs([
+tab_overview, tab_cross, tab_vendas, tab_leads, tab_analises = st.tabs([
     "📊 Visão Geral",
     "🔗 Cruzamento",
     "💰 Tabela de Vendas",
     "👤 Tabela de Leads",
+    "📈 Análises",
 ])
 
 
@@ -191,7 +203,7 @@ with tab_overview:
         selected_status = st.multiselect(
             "Filtrar por Status",
             options=all_status,
-            default=[s for s in ["COMPLETO"] if s in all_status],
+            # default=[s for s in ["COMPLETO"] if s in all_status],
             key="status_overview",
         )
 
@@ -252,7 +264,7 @@ with tab_cross:
                 status_cross = st.multiselect(
                     "Status",
                     options=get_status_options(df_vendas),
-                    default=[s for s in ["COMPLETO"] if s in get_status_options(df_vendas)],
+                    # default=[s for s in ["COMPLETO"] if s in get_status_options(df_vendas)],
                     key="status_cross",
                 )
 
@@ -350,7 +362,7 @@ with tab_vendas:
                 status_v = st.multiselect(
                     "Status",
                     options=get_status_options(df_vendas),
-                    default=[s for s in ["COMPLETO"] if s in get_status_options(df_vendas)],
+                    # default=[s for s in ["COMPLETO"] if s in get_status_options(df_vendas)],
                     key="status_vendas",
                 )
                 produtos_v = st.multiselect(
@@ -603,3 +615,213 @@ with tab_leads:
                 "utm_content": st.column_config.TextColumn("Content"),
             },
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — ANÁLISES CRUZADAS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_analises:
+    _sem_leads = df_leads.empty
+    _sem_vendas = df_vendas.empty
+
+    if _sem_leads and _sem_vendas:
+        st.info("Carregue arquivos de leads e vendas para usar as análises cruzadas.")
+    else:
+        # ── Configurações globais da aba ──────────────────────────────────────
+        with st.container():
+            ga1, ga2, ga3 = st.columns([3, 2, 1])
+            with ga1:
+                produto_analise = st.selectbox(
+                    "Produto de referência",
+                    options=get_products(df_vendas) if not _sem_vendas else [],
+                    key="produto_analise",
+                    help="Usado nas análises que cruzam leads com vendas.",
+                )
+            with ga2:
+                status_analise = st.multiselect(
+                    "Status das vendas",
+                    options=get_status_options(df_vendas) if not _sem_vendas else [],
+                    # default=[s for s in ["COMPLETO"] if not _sem_vendas and s in get_status_options(df_vendas)],
+                    key="status_analise",
+                )
+            with ga3:
+                st.write("")  # espaço vertical
+                rodar = st.button("Rodar análises", type="primary", key="rodar_analises")
+
+        if not rodar:
+            st.info("Selecione o produto de referência e clique em **Rodar análises**.")
+        else:
+            if not produto_analise:
+                st.warning("Selecione um produto de referência.")
+            else:
+                _status = status_analise or None
+
+                an1, an2, an3, an4, an5 = st.tabs([
+                    "⏱ Lead → Compra",
+                    "🏷 Tags por comprador",
+                    "📣 Anúncios (utm_content)",
+                    "🚪 Primeira entrada → Venda",
+                    "📡 Funil por UTM",
+                ])
+
+                # ── Análise 1 — Tempo médio lead → compra ────────────────────
+                with an1:
+                    if _sem_leads or _sem_vendas:
+                        st.info("Necessário ter leads e vendas carregados.")
+                    else:
+                        r1 = analysis_lead_to_purchase(df_leads, df_vendas, produto_analise, _status)
+
+                        if "error" in r1:
+                            st.error(r1["error"])
+                        elif r1["count"] == 0:
+                            st.warning("Nenhum lead encontrado que tenha comprado este produto.")
+                        else:
+                            st.caption(f"Compradores de **{produto_analise}** encontrados também na base de leads: **{r1['count']}**")
+                            c1, c2, c3, c4 = st.columns(4)
+                            c1.metric("Média", f"{r1['media']} dias")
+                            c2.metric("Mediana", f"{r1['mediana']} dias")
+                            c3.metric("Mínimo", f"{r1['min']} dias")
+                            c4.metric("Máximo", f"{r1['max']} dias")
+
+                            st.plotly_chart(
+                                days_histogram(r1["df"], title=f"Dias entre entrada na base e compra de {produto_analise}"),
+                                use_container_width=True,
+                            )
+
+                            with st.expander("Ver tabela detalhada"):
+                                cols_show = [c for c in ["lead_name", "lead_email", "data_lead", "data_compra", "dias"] if c in r1["df"].columns]
+                                st.dataframe(r1["df"][cols_show], use_container_width=True, hide_index=True)
+
+                # ── Análise 2 — Média de tags por comprador ──────────────────
+                with an2:
+                    if _sem_leads or _sem_vendas:
+                        st.info("Necessário ter leads e vendas carregados.")
+                    else:
+                        r2 = analysis_avg_tags_per_buyer(df_leads, df_vendas, produto_analise, _status)
+
+                        if "error" in r2:
+                            st.error(r2["error"])
+                        elif r2["count"] == 0:
+                            st.warning("Nenhum comprador deste produto encontrado na base de leads.")
+                        else:
+                            st.caption(f"Compradores de **{produto_analise}** com dados de tag: **{r2['count']}**")
+                            t1, t2, t3 = st.columns(3)
+                            t1.metric("Média de tags", f"{r2['media']}")
+                            t2.metric("Mediana", f"{r2['mediana']}")
+                            t3.metric("Máximo", f"{r2['max']}")
+
+                            st.plotly_chart(
+                                tags_distribution_bar(r2["dist"]),
+                                use_container_width=True,
+                            )
+
+                            with st.expander("Ver tabela detalhada"):
+                                cols_t = [c for c in ["lead_name", "lead_email", "num_tags"] if c in r2["df"].columns]
+                                st.dataframe(r2["df"][cols_t], use_container_width=True, hide_index=True)
+
+                # ── Análise 3 — Anúncios que trouxeram mais leads ────────────
+                with an3:
+                    if _sem_leads:
+                        st.info("Necessário ter arquivo de leads carregado.")
+                    else:
+                        r3 = analysis_leads_by_utm_content(df_leads)
+
+                        if r3.empty:
+                            st.warning("Coluna utm_content não encontrada ou sem dados.")
+                        else:
+                            st.caption(f"**{len(r3)}** valores distintos de utm_content na base de leads.")
+                            top_n_3 = st.slider("Exibir top N anúncios", 5, min(50, len(r3)), min(25, len(r3)), key="top_n_3")
+                            st.plotly_chart(utm_content_bar(r3, top_n=top_n_3), use_container_width=True)
+
+                            with st.expander("Ver tabela completa"):
+                                st.dataframe(r3, use_container_width=True, hide_index=True)
+
+                # ── Análise 4 — Primeira entrada → vendas ────────────────────
+                with an4:
+                    if _sem_leads or _sem_vendas:
+                        st.info("Necessário ter leads e vendas carregados.")
+                    else:
+                        r4 = analysis_first_entry_to_sales(df_leads, df_vendas, produto_analise, _status)
+
+                        if "error" in r4:
+                            st.error(r4["error"])
+                        elif not r4:
+                            st.warning("Nenhum dado encontrado.")
+                        else:
+                            st.caption(
+                                "Análise baseada na **primeira entrada** de cada lead na base "
+                                "(menor data de lead_register). Mostra qual tag ou formulário de origem "
+                                "gerou mais compradores."
+                            )
+                            sub4a, sub4b = st.tabs(["Por primeira tag", "Por formulário de origem"])
+
+                            with sub4a:
+                                by_tag = r4.get("by_tag", pd.DataFrame())
+                                if by_tag.empty:
+                                    st.info("Sem dados de tag.")
+                                else:
+                                    top_n_4t = st.slider("Top N tags", 5, min(30, len(by_tag)), min(20, len(by_tag)), key="top_n_4t")
+                                    st.plotly_chart(
+                                        first_entry_bar(by_tag, "tag_name", f"Primeira tag → compra de {produto_analise}", top_n=top_n_4t),
+                                        use_container_width=True,
+                                    )
+                                    st.dataframe(by_tag, use_container_width=True, hide_index=True)
+
+                            with sub4b:
+                                by_form = r4.get("by_form", pd.DataFrame())
+                                if by_form.empty:
+                                    st.info("Sem dados de formulário.")
+                                else:
+                                    top_n_4f = st.slider("Top N formulários", 5, min(30, len(by_form)), min(20, len(by_form)), key="top_n_4f")
+                                    st.plotly_chart(
+                                        first_entry_bar(by_form, "lead_register_form", f"Formulário de origem → compra de {produto_analise}", top_n=top_n_4f),
+                                        use_container_width=True,
+                                    )
+                                    st.dataframe(by_form, use_container_width=True, hide_index=True)
+
+                # ── Análise 5 — Funil por UTM ────────────────────────────────
+                with an5:
+                    if _sem_leads:
+                        st.info("Necessário ter arquivo de leads carregado.")
+                    else:
+                        st.caption(
+                            "Selecione a dimensão UTM e filtre os valores para ver leads e vendas por canal. "
+                            "A atribuição usa a **primeira entrada** de cada lead."
+                        )
+
+                        u1, u2 = st.columns([1, 3])
+                        with u1:
+                            utm_dim = st.selectbox(
+                                "Dimensão UTM",
+                                options=["utm_content", "utm_campaign", "utm_medium"],
+                                key="utm_dim",
+                            )
+                        with u2:
+                            utm_vals_disponíveis = get_utm_values(df_leads, utm_dim)
+                            utm_filter = st.multiselect(
+                                f"Filtrar por {utm_dim} (deixe vazio para ver todos)",
+                                options=utm_vals_disponíveis,
+                                key="utm_filter",
+                                placeholder="Buscar...",
+                            )
+
+                        r5 = analysis_utm_funnel(
+                            df_leads,
+                            df_vendas,
+                            utm_col=utm_dim,
+                            product=produto_analise if not _sem_vendas else None,
+                            status=_status,
+                            filter_values=utm_filter or None,
+                        )
+
+                        if r5.empty:
+                            st.warning("Nenhum resultado com os filtros selecionados.")
+                        else:
+                            top_n_5 = st.slider("Exibir top N", 5, min(50, len(r5)), min(20, len(r5)), key="top_n_5")
+                            st.plotly_chart(
+                                utm_funnel_bar(r5, utm_col=utm_dim, top_n=top_n_5),
+                                use_container_width=True,
+                            )
+
+                            with st.expander("Ver tabela completa"):
+                                st.dataframe(r5, use_container_width=True, hide_index=True)
