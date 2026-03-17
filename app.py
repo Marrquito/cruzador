@@ -285,14 +285,27 @@ with tab_cross:
                 if result is not None:
                     summary = result["summary"]
                     intersection = result["intersection"]
+                    b_first = result["b_first"]
                     only_a = result["only_a"]
                     only_b = result["only_b"]
+
+                    # Aviso de desconsiderados
+                    if summary["b_comprou_primeiro"] > 0:
+                        st.info(
+                            f"**{summary['b_comprou_primeiro']}** comprador(es) adquiriram o Produto B "
+                            f"**antes** do Grupo A — desconsiderados do funil A→B. "
+                            "Veja detalhes no expander abaixo."
+                        )
 
                     st.subheader("Resumo")
                     m1, m2, m3, m4, m5 = st.columns(5)
                     m1.metric("Compradores Grupo A", f"{summary['total_grupo_a']:,}")
                     m2.metric("Compradores Produto B", f"{summary['total_produto_b']:,}")
-                    m3.metric("Compraram ambos", f"{summary['compraram_ambos']:,}")
+                    m3.metric(
+                        "Convertidos A→B",
+                        f"{summary['compraram_ambos']:,}",
+                        help="Apenas quem comprou Grupo A primeiro e depois o Produto B.",
+                    )
                     m4.metric("Taxa de conversão A→B", f"{summary['taxa_conversao_pct']}%")
                     media = summary["media_dias_entre_compras"]
                     m5.metric("Média entre compras", f"{media} dias" if media is not None else "—")
@@ -304,7 +317,7 @@ with tab_cross:
                         with gc2:
                             st.plotly_chart(sequence_pie(summary["sequencia"]), use_container_width=True)
 
-                    st.subheader(f"Compradores em ambos os grupos ({len(intersection)})")
+                    st.subheader(f"Convertidos A→B ({len(intersection)})")
 
                     if not intersection.empty:
                         st.download_button(
@@ -345,6 +358,23 @@ with tab_cross:
                                 file_name="so_produto_b.csv", mime="text/csv", key="dl_only_b",
                             )
                             st.dataframe(only_b, use_container_width=True, hide_index=True)
+
+                    with st.expander(
+                        f"Compraram Produto B antes do Grupo A — desconsiderados do funil ({len(b_first)})",
+                        expanded=False,
+                    ):
+                        if b_first.empty:
+                            st.info("Nenhum caso deste tipo encontrado.")
+                        else:
+                            st.caption(
+                                "Estes compradores adquiriram o Produto B **antes** de qualquer produto "
+                                "do Grupo A. Por isso não são contabilizados como conversões A→B."
+                            )
+                            st.download_button(
+                                "⬇ Exportar (CSV)", data=b_first.to_csv(index=False).encode("utf-8-sig"),
+                                file_name="b_comprou_primeiro.csv", mime="text/csv", key="dl_b_first",
+                            )
+                            st.dataframe(b_first, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

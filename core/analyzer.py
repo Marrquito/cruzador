@@ -93,6 +93,17 @@ def crossref(
 
     intersection_df = pd.DataFrame(rows)
 
+    # Separa quem comprou B antes de A — esses são desconsiderados do funil A→B
+    if not intersection_df.empty:
+        b_first_df = intersection_df[
+            intersection_df["Sequência"] == "Comprou Produto B primeiro"
+        ].reset_index(drop=True)
+        intersection_df = intersection_df[
+            intersection_df["Sequência"] != "Comprou Produto B primeiro"
+        ].reset_index(drop=True)
+    else:
+        b_first_df = pd.DataFrame()
+
     # Detalhes de só A (sem B)
     only_a_df = (
         df_a[df_a["_id_comprador"].isin(only_a)][
@@ -115,14 +126,14 @@ def crossref(
         .reset_index(drop=True)
     )
 
-    # Sequência summary
+    # Sequência summary — apenas dos válidos (A→B)
     seq_counts = (
         intersection_df["Sequência"].value_counts().to_dict()
         if not intersection_df.empty
         else {}
     )
 
-    # Tempo médio entre compras (apenas com dias disponíveis)
+    # Tempo médio entre compras — apenas conversões A→B com dias disponíveis
     dias_validos = (
         intersection_df["Dias entre compras"].dropna()
         if not intersection_df.empty
@@ -130,14 +141,17 @@ def crossref(
     )
     media_dias = round(dias_validos.mean(), 1) if not dias_validos.empty else None
 
+    convertidos = len(intersection_df)
+
     summary = {
         "total_grupo_a": len(buyers_a),
         "total_produto_b": len(buyers_b),
-        "compraram_ambos": len(buyers_both),
+        "compraram_ambos": convertidos,
+        "b_comprou_primeiro": len(b_first_df),
         "so_grupo_a": len(only_a),
         "so_produto_b": len(only_b),
         "taxa_conversao_pct": (
-            round(len(buyers_both) / len(buyers_a) * 100, 1) if buyers_a else 0
+            round(convertidos / len(buyers_a) * 100, 1) if buyers_a else 0
         ),
         "sequencia": seq_counts,
         "media_dias_entre_compras": media_dias,
@@ -146,6 +160,7 @@ def crossref(
     return {
         "summary": summary,
         "intersection": intersection_df,
+        "b_first": b_first_df,
         "only_a": only_a_df,
         "only_b": only_b_df,
     }
