@@ -122,6 +122,74 @@ def analysis_lead_to_purchase(
     }
 
 
+# ── Análise 1b — Visão geral: tempo lead→compra para todos os produtos ─────────
+
+def analysis_lead_to_purchase_all(
+    df_leads: pd.DataFrame,
+    df_vendas: pd.DataFrame,
+    status: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Para cada produto, calcula contagem, mediana, min e max de dias entre
+    a primeira entrada na base de leads e a primeira compra do produto.
+    Retorna um DataFrame ordenado por mediana (menor primeiro).
+    """
+    dl = _prep_leads(df_leads)
+    dv = _prep_sales(df_vendas)
+
+    if "lead_register" not in dl.columns or "Nome do Produto" not in dv.columns:
+        return pd.DataFrame()
+
+    date_col = "Data de Aprovação" if "Data de Aprovação" in dv.columns else "Data do Pedido"
+
+    dv_f = dv.copy()
+    if status:
+        dv_f = dv_f[dv_f["Status"].isin(status)]
+
+    # Primeira data de compra por email × produto
+    sales = (
+        dv_f[dv_f["_email_norm"] != ""]
+        .dropna(subset=[date_col])
+        .groupby(["_email_norm", "Nome do Produto"])[date_col]
+        .min()
+        .reset_index()
+        .rename(columns={date_col: "data_compra"})
+    )
+
+    # Primeira entrada na base de leads por email
+    first_lead = (
+        dl[dl["_email_norm"] != ""]
+        .dropna(subset=["lead_register"])
+        .groupby("_email_norm")["lead_register"]
+        .min()
+        .reset_index()
+        .rename(columns={"lead_register": "data_lead"})
+    )
+
+    merged = sales.merge(first_lead, on="_email_norm", how="inner")
+    merged["dias"] = (merged["data_compra"] - merged["data_lead"]).dt.days
+    merged = merged[merged["dias"] >= 0]
+
+    if merged.empty:
+        return pd.DataFrame()
+
+    result = (
+        merged.groupby("Nome do Produto")["dias"]
+        .agg(
+            leads_que_compraram="count",
+            mediana=lambda s: int(s.median()),
+            minimo=lambda s: int(s.min()),
+            maximo=lambda s: int(s.max()),
+            media=lambda s: round(s.mean(), 1),
+        )
+        .reset_index()
+        .sort_values("mediana")
+        .reset_index(drop=True)
+    )
+
+    return result
+
+
 # ── Análise 2 — Média de tags por comprador ───────────────────────────────────
 
 def analysis_avg_tags_per_buyer(
@@ -155,6 +223,9 @@ def analysis_avg_tags_per_buyer(
     )
     tags_per_buyer = tags_per_buyer.merge(_display_names(dl), on="_email_norm", how="left")
 
+    if tags_per_buyer.empty:
+        return {"count": 0}
+
     dist = (
         tags_per_buyer["num_tags"]
         .value_counts()
@@ -166,8 +237,8 @@ def analysis_avg_tags_per_buyer(
     return {
         "count": len(tags_per_buyer),
         "media": round(tags_per_buyer["num_tags"].mean(), 2),
-        "mediana": int(tags_per_buyer["num_tags"].median()),
-        "max": int(tags_per_buyer["num_tags"].max()),
+        "mediana": int(tags_per_buyer["num_tags"].median()) if pd.notna(tags_per_buyer["num_tags"].median()) else 0,
+        "max": int(tags_per_buyer["num_tags"].max()) if pd.notna(tags_per_buyer["num_tags"].max()) else 0,
         "dist": dist,
         "df": tags_per_buyer.sort_values("num_tags", ascending=False),
     }
@@ -323,6 +394,141 @@ def analysis_utm_funnel(
         result = leads_agg
 
     return result.sort_values("emails_unicos", ascending=False).reset_index(drop=True)
+
+
+# ── Análise 6 — Comportamento antes/depois de uma tag ────────────────────────
+
+def analysis_behavior_around_tag(
+    df_leads: pd.DataFrame,
+    df_vendas: pd.DataFrame,
+    tag: str,
+    status: list[str] | None = None,
+) -> dict:
+    """
+    Para cada lead que possui a tag selecionada, compara suas compras ANTES e
+    DEPOIS da data em que a tag foi atribuída pela primeira vez.
+
+    Retorna um dict com:
+      - count: total de leads com a tag
+      - total_com_compra_antes / total_com_compra_depois
+      - media_compras_antes / media_compras_depois
+      - behavior_counts: DataFrame com breakdown comportamental
+      - products_after / products_before: top produtos por categoria
+      - summary_per_person: DataFrame detalhado por lead
+    """
+    dl = _prep_leads(df_leads)
+    dv = _prep_sales(df_vendas)
+
+    if "tag_name" not in dl.columns or "lead_register" not in dl.columns:
+        return {"error": "Colunas 'tag_name' e 'lead_register' necessárias na tabela de leads."}
+
+    if "Nome do Produto" not in dv.columns:
+        return {"error": "Coluna 'Nome do Produto' não encontrada na tabela de vendas."}
+
+    # Leads com a tag selecionada
+    dl_tag = dl[dl["tag_name"] == tag].copy()
+    if dl_tag.empty:
+        return {"count": 0}
+
+    # Primeira vez que a tag foi atribuída por email
+    first_tag = (
+        dl_tag[dl_tag["_email_norm"] != ""]
+        .dropna(subset=["lead_register"])
+        .groupby("_email_norm")["lead_register"]
+        .min()
+        .reset_index()
+        .rename(columns={"lead_register": "data_tag"})
+    )
+
+    if first_tag.empty:
+        return {"count": 0}
+
+    # Filtra vendas por status e emails presentes
+    dv_f = dv.copy()
+    if status:
+        dv_f = dv_f[dv_f["Status"].isin(status)]
+
+    date_col = "Data de Aprovação" if "Data de Aprovação" in dv_f.columns else "Data do Pedido"
+
+    sales = (
+        dv_f[
+            dv_f["_email_norm"].isin(first_tag["_email_norm"])
+            & (dv_f["_email_norm"] != "")
+        ]
+        .dropna(subset=[date_col])
+        .merge(first_tag, on="_email_norm", how="left")
+    )
+
+    sales_before = sales[sales[date_col] < sales["data_tag"]]
+    sales_after = sales[sales[date_col] >= sales["data_tag"]]
+
+    # Contagem de compras por pessoa
+    def _count_per_person(df_slice: pd.DataFrame, col_name: str) -> pd.DataFrame:
+        if df_slice.empty:
+            return pd.DataFrame(columns=["_email_norm", col_name])
+        return (
+            df_slice.groupby("_email_norm")["Nome do Produto"]
+            .count()
+            .reset_index()
+            .rename(columns={"Nome do Produto": col_name})
+        )
+
+    before_counts = _count_per_person(sales_before, "compras_antes")
+    after_counts = _count_per_person(sales_after, "compras_depois")
+
+    per_person = (
+        first_tag
+        .merge(before_counts, on="_email_norm", how="left")
+        .merge(after_counts, on="_email_norm", how="left")
+    )
+    per_person["compras_antes"] = per_person["compras_antes"].fillna(0).astype(int)
+    per_person["compras_depois"] = per_person["compras_depois"].fillna(0).astype(int)
+
+    per_person = per_person.merge(_display_names(dl), on="_email_norm", how="left")
+
+    # Classificação comportamental
+    def _classify(row) -> str:
+        b, a = row["compras_antes"], row["compras_depois"]
+        if b == 0 and a == 0:
+            return "Nunca comprou"
+        if b > 0 and a == 0:
+            return "Comprou apenas antes da tag"
+        if b == 0 and a > 0:
+            return "Comprou apenas depois da tag"
+        return "Comprou antes e depois da tag"
+
+    per_person["comportamento"] = per_person.apply(_classify, axis=1)
+
+    behavior_counts = (
+        per_person["comportamento"]
+        .value_counts()
+        .reset_index()
+    )
+    behavior_counts.columns = ["comportamento", "leads"]
+
+    # Top produtos comprados antes e depois
+    def _top_products(df_slice: pd.DataFrame) -> pd.DataFrame:
+        if df_slice.empty:
+            return pd.DataFrame(columns=["Nome do Produto", "compradores", "transacoes"])
+        return (
+            df_slice.groupby("Nome do Produto")
+            .agg(compradores=("_email_norm", "nunique"), transacoes=("_email_norm", "count"))
+            .reset_index()
+            .sort_values("compradores", ascending=False)
+            .reset_index(drop=True)
+        )
+
+    return {
+        "count": len(first_tag),
+        "total_com_compra_antes": int((per_person["compras_antes"] > 0).sum()),
+        "total_com_compra_depois": int((per_person["compras_depois"] > 0).sum()),
+        "media_compras_antes": round(per_person["compras_antes"].mean(), 2),
+        "media_compras_depois": round(per_person["compras_depois"].mean(), 2),
+        "behavior_counts": behavior_counts,
+        "products_after": _top_products(sales_after),
+        "products_before": _top_products(sales_before),
+        "per_person": per_person.sort_values("compras_depois", ascending=False),
+    }
 
 
 # ── Helper de listagem de valores UTM disponíveis ────────────────────────────

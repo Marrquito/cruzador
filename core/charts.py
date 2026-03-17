@@ -130,11 +130,44 @@ def products_bar(df: pd.DataFrame) -> go.Figure:
         margin=dict(l=20, r=20, t=50, b=20),
         height=500,
         coloraxis_showscale=False,
+        bargap=0.15,
     )
     return fig
 
 
 # ── Charts de análise cruzada ─────────────────────────────────────────────────
+
+def lead_to_purchase_all_bar(df: pd.DataFrame) -> go.Figure:
+    """
+    Barras horizontais com a mediana de dias lead→compra por produto.
+    Inclui anotações de mínimo e máximo.
+    """
+    if df.empty:
+        return go.Figure()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        name="Mediana (dias)",
+        y=df["Nome do Produto"],
+        x=df["mediana"],
+        orientation="h",
+        marker_color="#4C6EF5",
+        text=df.apply(lambda r: f"med {r['mediana']}d  |  min {r['minimo']}d  |  max {r['maximo']}d", axis=1),
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        title="Mediana de dias lead → compra por produto",
+        xaxis_title="Dias",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=max(400, len(df) * 38 + 100),
+        bargap=0.15,
+        showlegend=False,
+    )
+    return fig
+
 
 def days_histogram(df: pd.DataFrame, days_col: str = "dias", title: str = "Distribuição de dias") -> go.Figure:
     """Histograma de dias entre lead entry e compra."""
@@ -178,6 +211,7 @@ def tags_distribution_bar(dist_df: pd.DataFrame) -> go.Figure:
         xaxis=dict(tickmode="linear"),
         margin=dict(l=20, r=20, t=50, b=20),
         height=350,
+        bargap=0.15,
     )
     return fig
 
@@ -204,8 +238,9 @@ def utm_content_bar(df: pd.DataFrame, top_n: int = 25) -> go.Figure:
     fig.update_layout(
         yaxis=dict(autorange="reversed"),
         margin=dict(l=20, r=20, t=50, b=40),
-        height=max(400, top_n * 26 + 100),
+        height=max(400, top_n * 32 + 100),
         coloraxis_showscale=False,
+        bargap=0.15,
     )
     return fig
 
@@ -236,12 +271,14 @@ def first_entry_bar(df: pd.DataFrame, label_col: str, title: str, top_n: int = 2
     ))
     fig.update_layout(
         title=title,
-        barmode="overlay",
+        barmode="group",
         yaxis=dict(autorange="reversed"),
         xaxis_title="Quantidade",
-        margin=dict(l=20, r=20, t=50, b=20),
-        height=max(400, top_n * 30 + 100),
+        margin=dict(l=20, r=20, t=80, b=20),
+        height=max(400, top_n * 42 + 100),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        bargap=0.2,
+        bargroupgap=0.05,
     )
     return fig
 
@@ -276,11 +313,98 @@ def utm_funnel_bar(df: pd.DataFrame, utm_col: str, top_n: int = 20) -> go.Figure
 
     fig.update_layout(
         title=f"Leads e vendas por {utm_col}",
-        barmode="overlay",
+        barmode="group",
         yaxis=dict(autorange="reversed"),
         xaxis_title="Quantidade",
-        margin=dict(l=20, r=20, t=50, b=20),
-        height=max(400, top_n * 30 + 100),
+        margin=dict(l=20, r=20, t=80, b=20),
+        height=max(400, top_n * 42 + 100),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        bargap=0.2,
+        bargroupgap=0.05,
+    )
+    return fig
+
+
+# ── Charts de comportamento antes/depois da tag ───────────────────────────────
+
+def behavior_pie(behavior_counts: pd.DataFrame) -> go.Figure:
+    """Donut chart com breakdown comportamental antes/depois da tag."""
+    if behavior_counts.empty:
+        return go.Figure()
+
+    colors = {
+        "Nunca comprou": "#CED4DA",
+        "Comprou apenas antes da tag": "#F59F00",
+        "Comprou apenas depois da tag": "#37B24D",
+        "Comprou antes e depois da tag": "#4C6EF5",
+    }
+    marker_colors = [colors.get(l, "#ADB5BD") for l in behavior_counts["comportamento"]]
+
+    fig = go.Figure(
+        go.Pie(
+            labels=behavior_counts["comportamento"],
+            values=behavior_counts["leads"],
+            hole=0.45,
+            marker_colors=marker_colors,
+            textinfo="label+percent",
+        )
+    )
+    fig.update_layout(
+        title="Comportamento de compra em relação à tag",
+        margin=dict(l=20, r=20, t=50, b=20),
+        height=380,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25),
+    )
+    return fig
+
+
+def products_before_after_bar(
+    products_before: pd.DataFrame,
+    products_after: pd.DataFrame,
+    top_n: int = 15,
+) -> go.Figure:
+    """
+    Barras agrupadas mostrando os top produtos comprados antes vs depois da tag.
+    Ordenados pelo total (antes + depois).
+    """
+    if products_before.empty and products_after.empty:
+        return go.Figure()
+
+    pb = products_before[["Nome do Produto", "compradores"]].rename(columns={"compradores": "antes"}) if not products_before.empty else pd.DataFrame(columns=["Nome do Produto", "antes"])
+    pa = products_after[["Nome do Produto", "compradores"]].rename(columns={"compradores": "depois"}) if not products_after.empty else pd.DataFrame(columns=["Nome do Produto", "depois"])
+
+    merged = pb.merge(pa, on="Nome do Produto", how="outer").fillna(0)
+    merged["antes"] = merged["antes"].astype(int)
+    merged["depois"] = merged["depois"].astype(int)
+    merged["total"] = merged["antes"] + merged["depois"]
+    merged = merged.nlargest(top_n, "total")
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Antes da tag",
+        y=merged["Nome do Produto"],
+        x=merged["antes"],
+        orientation="h",
+        marker_color="#F59F00",
+    ))
+    fig.add_trace(go.Bar(
+        name="Depois da tag",
+        y=merged["Nome do Produto"],
+        x=merged["depois"],
+        orientation="h",
+        marker_color="#37B24D",
+    ))
+
+    fig.update_layout(
+        title=f"Top {top_n} produtos: compradores antes vs depois da tag",
+        barmode="group",
+        yaxis=dict(autorange="reversed"),
+        xaxis_title="Nº de compradores únicos",
+        margin=dict(l=20, r=20, t=80, b=20),
+        height=max(400, top_n * 48 + 100),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        bargap=0.2,
+        bargroupgap=0.05,
     )
     return fig
