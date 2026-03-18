@@ -35,6 +35,7 @@ from core.cross_analyzer import (
     analysis_first_entry_to_sales,
     analysis_utm_funnel,
     analysis_behavior_around_tag,
+    analysis_behavior_around_filter,
     get_utm_values,
 )
 
@@ -551,6 +552,11 @@ with tab_leads:
                     options=get_utm_options(df_leads, "utm_medium"),
                     key="utm_medium_leads",
                 )
+                utm_contents = st.multiselect(
+                    "UTM Content",
+                    options=get_utm_options(df_leads, "utm_content"),
+                    key="utm_content_leads",
+                )
 
                 date_min_l = df_leads["lead_register"].min() if "lead_register" in df_leads.columns else None
                 date_max_l = df_leads["lead_register"].max() if "lead_register" in df_leads.columns else None
@@ -578,6 +584,8 @@ with tab_leads:
             dl = dl[dl["utm_campaign"].isin(utm_campaigns)]
         if utm_mediums and "utm_medium" in dl.columns:
             dl = dl[dl["utm_medium"].isin(utm_mediums)]
+        if utm_contents and "utm_content" in dl.columns:
+            dl = dl[dl["utm_content"].isin(utm_contents)]
         if data_inicio_l and data_fim_l and "lead_register" in dl.columns:
             dl = dl[
                 (dl["lead_register"].dt.date >= data_inicio_l)
@@ -648,6 +656,69 @@ with tab_leads:
                 "utm_content": st.column_config.TextColumn("Content"),
             },
         )
+
+        # ── Comportamento antes/depois do filtro ──────────────────────────────
+        if not df_vendas.empty and not dl.empty:
+            st.divider()
+            st.subheader("Comportamento de compra antes/depois da entrada")
+            st.caption(
+                "Para cada lead neste conjunto filtrado, compara o que compraram "
+                "**antes** e **depois** da primeira data em que apareceram com esses critérios. "
+                "Útil para entender se o canal/tag **origina** ou **resulta** de uma compra."
+            )
+
+            rb = analysis_behavior_around_filter(dl, df_vendas, status=None)
+
+            if "error" in rb:
+                st.warning(rb["error"])
+            elif rb.get("count", 0) == 0:
+                st.info("Nenhum lead com email identificado neste filtro.")
+            else:
+                rb1, rb2, rb3, rb4 = st.columns(4)
+                rb1.metric("Leads no filtro", f"{rb['count']:,}")
+                rb2.metric(
+                    "Compraram antes da entrada",
+                    f"{rb['total_com_compra_antes']:,}",
+                    help="Leads com ao menos 1 compra anterior à primeira data neste filtro.",
+                )
+                rb3.metric(
+                    "Compraram depois da entrada",
+                    f"{rb['total_com_compra_depois']:,}",
+                )
+                rb4.metric(
+                    "Média de compras depois",
+                    f"{rb['media_compras_depois']}",
+                    delta=f"{round(rb['media_compras_depois'] - rb['media_compras_antes'], 2):+} vs antes",
+                )
+
+                top_n_lb = st.slider("Top N produtos", 5, 30, 15, key="top_n_leads_behavior")
+
+                lbc1, lbc2 = st.columns([1, 1])
+                with lbc1:
+                    st.plotly_chart(
+                        behavior_pie(rb["behavior_counts"]),
+                        use_container_width=True,
+                    )
+                with lbc2:
+                    st.plotly_chart(
+                        products_before_after_bar(
+                            rb["products_before"],
+                            rb["products_after"],
+                            top_n=top_n_lb,
+                        ),
+                        use_container_width=True,
+                    )
+
+                with st.expander("Ver detalhes por lead"):
+                    st.dataframe(
+                        rb["per_person"][["_email_norm", "data_entrada", "compras_antes", "compras_depois", "comportamento"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "_email_norm": st.column_config.TextColumn("E-mail"),
+                            "data_entrada": st.column_config.DatetimeColumn("Primeira entrada", format="DD/MM/YYYY"),
+                        },
+                    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
