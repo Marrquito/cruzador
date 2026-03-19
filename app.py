@@ -874,7 +874,7 @@ with tab_analises:
                         st.warning("Coluna utm_content não encontrada ou sem dados.")
                     else:
                         st.caption(f"**{len(r3)}** valores distintos de utm_content na base de leads.")
-                        top_n_3 = st.slider("Exibir top N anúncios", 5, min(50, len(r3)), min(25, len(r3)), key="top_n_3")
+                        top_n_3 = st.slider("Exibir top N anúncios", 5, min(50, len(r3)), min(25, len(r3)), key="top_n_3") if len(r3) > 5 else len(r3)
                         st.plotly_chart(utm_content_bar(r3, top_n=top_n_3), use_container_width=True)
                         with st.expander("Ver tabela completa"):
                             st.dataframe(r3, use_container_width=True, hide_index=True)
@@ -906,7 +906,7 @@ with tab_analises:
                             if by_tag.empty:
                                 st.info("Sem dados de tag.")
                             else:
-                                top_n_4t = st.slider("Top N tags", 5, min(30, len(by_tag)), min(20, len(by_tag)), key="top_n_4t")
+                                top_n_4t = st.slider("Top N tags", 5, min(30, len(by_tag)), min(20, len(by_tag)), key="top_n_4t") if len(by_tag) > 5 else len(by_tag)
                                 st.plotly_chart(
                                     first_entry_bar(by_tag, "tag_name", f"Primeira tag → compra de {_produto_label}", top_n=top_n_4t),
                                     use_container_width=True,
@@ -918,7 +918,7 @@ with tab_analises:
                             if by_form.empty:
                                 st.info("Sem dados de formulário.")
                             else:
-                                top_n_4f = st.slider("Top N formulários", 5, min(30, len(by_form)), min(20, len(by_form)), key="top_n_4f")
+                                top_n_4f = st.slider("Top N formulários", 5, min(30, len(by_form)), min(20, len(by_form)), key="top_n_4f") if len(by_form) > 5 else len(by_form)
                                 st.plotly_chart(
                                     first_entry_bar(by_form, "lead_register_form", f"Formulário de origem → compra de {_produto_label}", top_n=top_n_4f),
                                     use_container_width=True,
@@ -1038,7 +1038,7 @@ with tab_analises:
                     if r5.empty:
                         st.warning("Nenhum resultado com os filtros selecionados.")
                     else:
-                        top_n_5 = st.slider("Exibir top N", 5, min(50, len(r5)), min(20, len(r5)), key="top_n_5")
+                        top_n_5 = st.slider("Exibir top N", 5, min(50, len(r5)), min(20, len(r5)), key="top_n_5") if len(r5) > 5 else len(r5)
                         st.plotly_chart(utm_funnel_bar(r5, utm_col=utm_dim, top_n=top_n_5), use_container_width=True)
                         with st.expander("Ver tabela completa"):
                             st.dataframe(r5, use_container_width=True, hide_index=True)

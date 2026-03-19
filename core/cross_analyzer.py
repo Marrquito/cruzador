@@ -284,7 +284,11 @@ def analysis_first_entry_to_sales(
 ) -> dict:
     """
     Para cada lead, pega sua primeira entrada na base (menor lead_register).
-    Verifica se esse lead comprou o produto e agrupa por tag e formulário.
+    Verifica se esse lead comprou o produto APÓS essa data de entrada e
+    agrupa por tag e formulário.
+
+    Só conta como conversão se data da compra >= data da primeira entrada,
+    evitando inflar tags com compradores que já haviam comprado antes de entrar.
     """
     dl = _prep_leads(df_leads)
     dv = _prep_sales(df_vendas)
@@ -292,13 +296,33 @@ def analysis_first_entry_to_sales(
     if "lead_register" not in dl.columns:
         return {"error": "Coluna 'lead_register' não encontrada."}
 
-    buyers = _buyer_emails(dv, product, status)
     first = _first_entry_per_email(dl).copy()
 
     if first.empty:
         return {}
 
-    first["comprou"] = first["_email_norm"].isin(buyers).astype(int)
+    # Primeira compra do produto por email (respeitando filtro de status)
+    date_col = "Data de Aprovação" if "Data de Aprovação" in dv.columns else "Data do Pedido"
+    mask = dv["Nome do Produto"] == product
+    if status:
+        mask &= dv["Status"].isin(status)
+
+    first_purchase = (
+        dv[mask & (dv["_email_norm"] != "")]
+        .dropna(subset=[date_col])
+        .groupby("_email_norm")[date_col]
+        .min()
+        .reset_index()
+        .rename(columns={date_col: "data_compra"})
+    )
+
+    # Join e restrição temporal: só conta se comprou DEPOIS (ou no mesmo dia) da entrada
+    first = first.merge(first_purchase, on="_email_norm", how="left")
+    first["comprou"] = (
+        first["data_compra"].notna()
+        & (first["data_compra"] >= first["lead_register"])
+    ).astype(int)
+
     result = {}
 
     # Por primeira tag
@@ -373,9 +397,25 @@ def analysis_utm_funnel(
     )
 
     if product:
-        buyers = _buyer_emails(dv, product, status)
-        dl_first = dl_first.copy()
-        dl_first["comprou"] = dl_first["_email_norm"].isin(buyers).astype(int)
+        date_col = "Data de Aprovação" if "Data de Aprovação" in dv.columns else "Data do Pedido"
+        mask = dv["Nome do Produto"] == product
+        if status:
+            mask &= dv["Status"].isin(status)
+
+        first_purchase = (
+            dv[mask & (dv["_email_norm"] != "")]
+            .dropna(subset=[date_col])
+            .groupby("_email_norm")[date_col]
+            .min()
+            .reset_index()
+            .rename(columns={date_col: "data_compra"})
+        )
+
+        dl_first = dl_first.copy().merge(first_purchase, on="_email_norm", how="left")
+        dl_first["comprou"] = (
+            dl_first["data_compra"].notna()
+            & (dl_first["data_compra"] >= dl_first["lead_register"])
+        ).astype(int)
 
         buyers_agg = (
             dl_first.groupby(utm_col)["comprou"]
