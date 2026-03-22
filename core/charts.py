@@ -337,6 +337,9 @@ def behavior_pie(behavior_counts: pd.DataFrame) -> go.Figure:
         "Comprou apenas antes da tag": "#F59F00",
         "Comprou apenas depois da tag": "#37B24D",
         "Comprou antes e depois da tag": "#4C6EF5",
+        "Comprou apenas antes da entrada": "#F59F00",
+        "Comprou apenas depois da entrada": "#37B24D",
+        "Comprou antes e depois da entrada": "#4C6EF5",
     }
     marker_colors = [colors.get(l, "#ADB5BD") for l in behavior_counts["comportamento"]]
 
@@ -381,20 +384,22 @@ def products_before_after_bar(
     merged = merged.nlargest(top_n, "total")
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Antes da tag",
-        y=merged["Nome do Produto"],
-        x=merged["antes"],
-        orientation="h",
-        marker_color="#F59F00",
-    ))
-    fig.add_trace(go.Bar(
-        name="Depois da tag",
-        y=merged["Nome do Produto"],
-        x=merged["depois"],
-        orientation="h",
-        marker_color="#37B24D",
-    ))
+    if merged["antes"].sum() > 0:
+        fig.add_trace(go.Bar(
+            name="Antes da tag",
+            y=merged["Nome do Produto"],
+            x=merged["antes"],
+            orientation="h",
+            marker_color="#F59F00",
+        ))
+    if merged["depois"].sum() > 0:
+        fig.add_trace(go.Bar(
+            name="Depois da tag",
+            y=merged["Nome do Produto"],
+            x=merged["depois"],
+            orientation="h",
+            marker_color="#37B24D",
+        ))
 
     fig.update_layout(
         title=f"Top {top_n} produtos: compradores antes vs depois da tag",
