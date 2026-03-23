@@ -135,6 +135,104 @@ def merge_files(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     return merge_vendas(dfs)
 
 
+# ── BigQuery ──────────────────────────────────────────────────────────────────
+
+_BQ_PROJECT  = "effective-might-466701-r5"
+_BQ_DATASET  = "Hotmart"
+_BQ_VENDAS   = "Hotmart_Greenn_Unificada"
+_BQ_LEADS    = "Green_Gold"
+
+# Mapeamento de nomes BQ (snake_case com __) → nomes originais do CSV
+_BQ_VENDAS_COL_MAP = {
+    "ID_Transa____o":                               "ID Transação",
+    "Nome_do_Produto":                              "Nome do Produto",
+    "ID_do_Produto":                                "ID do Produto",
+    "Nome_do_Comprador":                            "Nome do Comprador",
+    "CPF_CNPJ_Comprador":                           "CPF/CNPJ Comprador",
+    "E_mail_do_Comprador":                          "E-mail do Comprador",
+    "Telefone_do_Comprador":                        "Telefone do Comprador",
+    "Cidade_do_Comprador":                          "Cidade do Comprador",
+    "Estado_do_Comprador":                          "Estado do Comprador",
+    "Pa__s_do_Comprador":                           "País do Comprador",
+    "Endere__o_do_Comprador":                       "Endereço do Comprador",
+    "Bairro_do_Comprador":                          "Bairro do Comprador",
+    "Complemento_do_Comprador":                     "Complemento do Comprador",
+    "CEP_do_Comprador":                             "CEP do Comprador",
+    "N__mero_do_Comprador":                         "Número do Comprador",
+    "Nome_do_Produtor":                             "Nome do Produtor",
+    "CPF_CNPJ_do_Produtor":                         "CPF/CNPJ do Produtor",
+    "E_mail_do_Produtor":                           "E-mail do Produtor",
+    "Celular_do_Produtor":                          "Celular do Produtor",
+    "Telefone_do_Produtor":                         "Telefone do Produtor",
+    "Data_do_Pedido":                               "Data do Pedido",
+    "Data_de_Aprova____o":                          "Data de Aprovação",
+    "Valor_do_Produto":                             "Valor do Produto",
+    "___Assinatura":                                "# Assinatura",
+    "Comiss__o_Como":                               "Comissão Como",
+    "M__todo_de_Pagamento":                         "Método de Pagamento",
+    "N__mero_de_Parcelas":                          "Número de Parcelas",
+    "Tipo_de_Pagamento":                            "Tipo de Pagamento",
+    "Fonte_de_Rastreamento":                        "Fonte de Rastreamento",
+    "C__digo_de_Rastreamento":                      "Código de Rastreamento",
+    "Data_de_Expira____o_da_Garantia":              "Data de Expiração da Garantia",
+    "C__digo_da_Oferta":                            "Código da Oferta",
+    "Taxa_Hotmart_Total":                           "Taxa Hotmart Total",
+    "Moeda_da_Taxa_Hotmart":                        "Moeda da Taxa Hotmart",
+    "Valor_Pago_pelo_Comprador_Sem_Taxas_e_Impostos": "Valor Pago pelo Comprador Sem Taxas e Impostos",
+}
+
+
+def load_from_bigquery(credentials: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Carrega df_vendas e df_leads diretamente do BigQuery.
+
+    credentials: dict com as chaves do Service Account
+                 (conforme st.secrets["gcp_service_account"] ou JSON local).
+    """
+    from google.cloud import bigquery
+    from google.oauth2 import service_account
+
+    sa_creds = service_account.Credentials.from_service_account_info(
+        credentials,
+        scopes=[
+            "https://www.googleapis.com/auth/bigquery",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
+    )
+    client = bigquery.Client(credentials=sa_creds, project=_BQ_PROJECT)
+
+    # ── Vendas ────────────────────────────────────────────────────────────────
+    df_vendas = client.query(
+        f"SELECT * FROM `{_BQ_PROJECT}.{_BQ_DATASET}.{_BQ_VENDAS}`"
+    ).to_dataframe(create_bqstorage_client=False)
+
+    # Restaura nomes originais (BQ substitui chars especiais por _)
+    df_vendas = df_vendas.rename(columns=_BQ_VENDAS_COL_MAP)
+
+    for col in DATE_COLS_VENDAS:
+        if col in df_vendas.columns:
+            df_vendas[col] = pd.to_datetime(df_vendas[col], errors="coerce")
+
+    if "CPF/CNPJ Comprador" in df_vendas.columns and "Nome do Comprador" in df_vendas.columns:
+        df_vendas["_cpf_norm"] = df_vendas["CPF/CNPJ Comprador"].apply(_normalize_cpf)
+        df_vendas["_nome_norm"] = df_vendas["Nome do Comprador"].apply(_normalize_name)
+        df_vendas["_id_comprador"] = df_vendas.apply(
+            lambda r: r["_cpf_norm"] if r["_cpf_norm"] else r["_nome_norm"],
+            axis=1,
+        )
+
+    # ── Leads ─────────────────────────────────────────────────────────────────
+    df_leads = client.query(
+        f"SELECT * FROM `{_BQ_PROJECT}.{_BQ_DATASET}.{_BQ_LEADS}`"
+    ).to_dataframe(create_bqstorage_client=False)
+
+    for col in DATE_COLS_LEADS:
+        if col in df_leads.columns:
+            df_leads[col] = pd.to_datetime(df_leads[col], errors="coerce")
+
+    return df_vendas, df_leads
+
+
 # ── Helpers de filtro — Vendas ────────────────────────────────────────────────
 
 def get_products(df: pd.DataFrame) -> list[str]:

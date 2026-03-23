@@ -1,4 +1,5 @@
 import os
+import json
 
 import pandas as pd
 import streamlit as st
@@ -7,11 +8,7 @@ import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 
 from core.loader import (
-    detect_file_type,
-    load_vendas,
-    load_leads,
-    merge_vendas,
-    merge_leads,
+    load_from_bigquery,
     get_products,
     get_status_options,
     get_states,
@@ -112,76 +109,54 @@ with st.sidebar:
     authenticator.logout("Sair", location="sidebar")
     st.divider()
 
-    st.subheader("📂 Arquivos")
-    uploaded_files = st.file_uploader(
-        "Carregar planilhas CSV",
-        type=["csv"],
-        accept_multiple_files=True,
-        help="Envie arquivos de vendas (Hotmart) e/ou leads (UTMs/Tags). O tipo é detectado automaticamente.",
-    )
+    if st.button("🔄 Atualizar dados", width='stretch', help="Recarrega os dados do BigQuery"):
+        st.cache_data.clear()
+        st.rerun()
 
     st.divider()
     st.caption("v1.0 · Cruzador")
 
 
-# ── Carregamento e separação dos dados ───────────────────────────────────────
-@st.cache_data(show_spinner="Processando arquivos...")
-def process_files(files_data: list[tuple[str, bytes]]) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    """
-    Retorna (df_vendas, df_leads, alertas).
-    Detecta automaticamente o tipo de cada arquivo.
-    """
-    vendas_dfs, leads_dfs, alertas = [], [], []
-
-    for name, content in files_data:
-        try:
-            import io
-            import pandas as _pd
-            from core.loader import ENCODINGS
-
-            for enc in ENCODINGS:
-                try:
-                    df_peek = _pd.read_csv(io.BytesIO(content), encoding=enc, nrows=1)
-                    break
-                except UnicodeDecodeError:
-                    continue
-
-            file_type = detect_file_type(df_peek)
-
-            if file_type == "vendas":
-                vendas_dfs.append(load_vendas(content))
-            elif file_type == "leads":
-                leads_dfs.append(load_leads(content))
-            else:
-                alertas.append(f"'{name}': tipo não reconhecido — ignorado.")
-        except Exception as e:
-            alertas.append(f"Erro ao carregar '{name}': {e}")
-
-    df_vendas = merge_vendas(vendas_dfs) if vendas_dfs else pd.DataFrame()
-    df_leads = merge_leads(leads_dfs) if leads_dfs else pd.DataFrame()
-    return df_vendas, df_leads, alertas
+# ── Credenciais e carregamento do BigQuery ────────────────────────────────────
+def _get_bq_credentials() -> dict:
+    """Retorna credenciais do Service Account: tenta st.secrets primeiro, depois JSON local."""
+    try:
+        return dict(st.secrets["gcp_service_account"])
+    except Exception:
+        pass
+    for fname in os.listdir("."):
+        if fname.endswith(".json"):
+            try:
+                with open(fname) as f:
+                    data = json.load(f)
+                if data.get("type") == "service_account":
+                    return data
+            except Exception:
+                continue
+    raise RuntimeError(
+        "Credenciais GCP não encontradas. "
+        "Configure [gcp_service_account] em st.secrets ou coloque o JSON do Service Account na pasta do projeto."
+    )
 
 
-if not uploaded_files:
-    st.title("🔀 Cruzador de Dados")
-    st.info("Carregue ao menos um arquivo CSV no painel lateral para começar.")
-    st.stop()
+@st.cache_data(ttl=3600, show_spinner="Carregando dados do BigQuery...")
+def load_data_from_bq() -> tuple[pd.DataFrame, pd.DataFrame]:
+    creds = _get_bq_credentials()
+    return load_from_bigquery(creds)
 
-files_data = [(f.name, f.read()) for f in uploaded_files]
-df_vendas, df_leads, alertas = process_files(files_data)
 
-# Exibe alertas no sidebar
+df_vendas, df_leads = load_data_from_bq()
+alertas: list[str] = []
+
+# Exibe contagem no sidebar
 with st.sidebar:
-    n_vendas = len([f for f in files_data if True])  # contagem via dados
     if not df_vendas.empty:
         st.success(f"Vendas: **{len(df_vendas):,}** transações")
     if not df_leads.empty:
         st.success(f"Leads: **{len(df_leads):,}** registros")
-    for alerta in alertas:
-        st.warning(alerta)
 
 if df_vendas.empty and df_leads.empty:
-    st.error("Nenhum dado válido encontrado nos arquivos carregados.")
+    st.error("Não foi possível carregar dados do BigQuery. Verifique as credenciais e as tabelas configuradas.")
     st.stop()
 
 # ── Layout principal ──────────────────────────────────────────────────────────
@@ -201,7 +176,7 @@ tab_overview, tab_cross, tab_vendas, tab_leads, tab_analises = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_overview:
     if df_vendas.empty:
-        st.info("Nenhum arquivo de vendas carregado.")
+        st.info("Nenhum dado de vendas disponível.")
     else:
         all_status = get_status_options(df_vendas)
         selected_status = st.multiselect(
@@ -234,7 +209,7 @@ with tab_overview:
             )
             col4.metric("Período", periodo)
 
-        st.plotly_chart(products_bar(df_view), use_container_width=True)
+        st.plotly_chart(products_bar(df_view), width='stretch')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -242,7 +217,7 @@ with tab_overview:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_cross:
     if df_vendas.empty:
-        st.info("Nenhum arquivo de vendas carregado.")
+        st.info("Nenhum dado de vendas disponível.")
     else:
         all_products = get_products(df_vendas)
 
@@ -317,9 +292,9 @@ with tab_cross:
                     if summary["compraram_ambos"] > 0:
                         gc1, gc2 = st.columns(2)
                         with gc1:
-                            st.plotly_chart(funnel_chart(summary, "Grupo A", product_b), use_container_width=True)
+                            st.plotly_chart(funnel_chart(summary, "Grupo A", product_b), width='stretch')
                         with gc2:
-                            st.plotly_chart(sequence_pie(summary["sequencia"]), use_container_width=True)
+                            st.plotly_chart(sequence_pie(summary["sequencia"]), width='stretch')
 
                     st.subheader(f"Convertidos A→B ({len(intersection)})")
 
@@ -332,7 +307,7 @@ with tab_cross:
                         )
                         st.dataframe(
                             intersection,
-                            use_container_width=True,
+                            width='stretch',
                             hide_index=True,
                             column_config={"Dias entre compras": st.column_config.NumberColumn(format="%d dias")},
                         )
@@ -344,7 +319,7 @@ with tab_cross:
                                 with st.expander("Ver timeline de compras"):
                                     st.plotly_chart(
                                         timeline_scatter(intersection, group_a_col[0], product_b_col[0]),
-                                        use_container_width=True,
+                                        width='stretch',
                                     )
 
                     with st.expander(f"Só compraram Grupo A (não foram para B) — {len(only_a)}"):
@@ -353,7 +328,7 @@ with tab_cross:
                                 "⬇ Exportar (CSV)", data=only_a.to_csv(index=False).encode("utf-8-sig"),
                                 file_name="so_grupo_a.csv", mime="text/csv", key="dl_only_a",
                             )
-                            st.dataframe(only_a, use_container_width=True, hide_index=True)
+                            st.dataframe(only_a, width='stretch', hide_index=True)
 
                     with st.expander(f"Só compraram Produto B (não estavam no Grupo A) — {len(only_b)}"):
                         if not only_b.empty:
@@ -361,7 +336,7 @@ with tab_cross:
                                 "⬇ Exportar (CSV)", data=only_b.to_csv(index=False).encode("utf-8-sig"),
                                 file_name="so_produto_b.csv", mime="text/csv", key="dl_only_b",
                             )
-                            st.dataframe(only_b, use_container_width=True, hide_index=True)
+                            st.dataframe(only_b, width='stretch', hide_index=True)
 
                     with st.expander(
                         f"Compraram Produto B antes do Grupo A — desconsiderados do funil ({len(b_first)})",
@@ -378,7 +353,7 @@ with tab_cross:
                                 "⬇ Exportar (CSV)", data=b_first.to_csv(index=False).encode("utf-8-sig"),
                                 file_name="b_comprou_primeiro.csv", mime="text/csv", key="dl_b_first",
                             )
-                            st.dataframe(b_first, use_container_width=True, hide_index=True)
+                            st.dataframe(b_first, width='stretch', hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -386,7 +361,7 @@ with tab_cross:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_vendas:
     if df_vendas.empty:
-        st.info("Nenhum arquivo de vendas carregado.")
+        st.info("Nenhum dado de vendas disponível.")
     else:
         # ── Filtros ────────────────────────────────────────────────────────────
         with st.expander("Filtros", expanded=True):
@@ -500,7 +475,7 @@ with tab_vendas:
 
         st.dataframe(
             dv_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "Data do Pedido": st.column_config.DatetimeColumn(format="DD/MM/YYYY"),
@@ -516,7 +491,7 @@ with tab_vendas:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_leads:
     if df_leads.empty:
-        st.info("Nenhum arquivo de leads carregado.")
+        st.info("Nenhum dado de leads disponível.")
     else:
         # ── Filtros ────────────────────────────────────────────────────────────
         with st.expander("Filtros", expanded=True):
@@ -639,7 +614,7 @@ with tab_leads:
 
         st.dataframe(
             dl_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "lead_register": st.column_config.DatetimeColumn(
@@ -697,7 +672,7 @@ with tab_leads:
                 with lbc1:
                     st.plotly_chart(
                         behavior_pie(rb["behavior_counts"]),
-                        use_container_width=True,
+                        width='stretch',
                     )
                 with lbc2:
                     st.plotly_chart(
@@ -706,13 +681,13 @@ with tab_leads:
                             rb["products_after"],
                             top_n=top_n_lb,
                         ),
-                        use_container_width=True,
+                        width='stretch',
                     )
 
                 with st.expander("Ver detalhes por lead"):
                     st.dataframe(
                         rb["per_person"][["_email_norm", "data_entrada", "compras_antes", "compras_depois", "comportamento"]],
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True,
                         column_config={
                             "_email_norm": st.column_config.TextColumn("E-mail"),
@@ -816,11 +791,11 @@ with tab_analises:
 
                             st.plotly_chart(
                                 days_histogram(r1["df"], title=f"Dias entre entrada na base e compra de {_produto_label}"),
-                                use_container_width=True,
+                                width='stretch',
                             )
                             with st.expander("Ver tabela detalhada"):
                                 cols_show = [c for c in ["lead_name", "lead_email", "data_lead", "data_compra", "dias"] if c in r1["df"].columns]
-                                st.dataframe(r1["df"][cols_show], use_container_width=True, hide_index=True)
+                                st.dataframe(r1["df"][cols_show], width='stretch', hide_index=True)
 
                     with an1_all:
                         r1_all = st.session_state.get("_an_r1_all", pd.DataFrame())
@@ -828,7 +803,7 @@ with tab_analises:
                             st.warning("Nenhum cruzamento lead → compra encontrado para os produtos disponíveis.")
                         else:
                             st.caption(f"**{len(r1_all)}** produtos com leads identificados na base. Ordenado por mediana crescente.")
-                            st.plotly_chart(lead_to_purchase_all_bar(r1_all), use_container_width=True)
+                            st.plotly_chart(lead_to_purchase_all_bar(r1_all), width='stretch')
                             st.dataframe(
                                 r1_all.rename(columns={
                                     "Nome do Produto": "Produto",
@@ -838,7 +813,7 @@ with tab_analises:
                                     "maximo": "Máximo (dias)",
                                     "media": "Média (dias)",
                                 }),
-                                use_container_width=True,
+                                width='stretch',
                                 hide_index=True,
                             )
 
@@ -859,15 +834,15 @@ with tab_analises:
                         t2.metric("Mediana", f"{r2['mediana']}")
                         t3.metric("Máximo", f"{r2['max']}")
 
-                        st.plotly_chart(tags_distribution_bar(r2["dist"]), use_container_width=True)
+                        st.plotly_chart(tags_distribution_bar(r2["dist"]), width='stretch')
                         with st.expander("Ver tabela detalhada"):
                             cols_t = [c for c in ["lead_name", "lead_email", "num_tags"] if c in r2["df"].columns]
-                            st.dataframe(r2["df"][cols_t], use_container_width=True, hide_index=True)
+                            st.dataframe(r2["df"][cols_t], width='stretch', hide_index=True)
 
             # ── Análise 3 — Anúncios que trouxeram mais leads ─────────────────
             with an3:
                 if _sem_leads:
-                    st.info("Necessário ter arquivo de leads carregado.")
+                    st.info("Necessário ter dados de leads disponíveis.")
                 else:
                     r3 = st.session_state["_an_r3"]
                     if r3.empty:
@@ -875,9 +850,9 @@ with tab_analises:
                     else:
                         st.caption(f"**{len(r3)}** valores distintos de utm_content na base de leads.")
                         top_n_3 = st.slider("Exibir top N anúncios", 5, min(50, len(r3)), min(25, len(r3)), key="top_n_3") if len(r3) > 5 else len(r3)
-                        st.plotly_chart(utm_content_bar(r3, top_n=top_n_3), use_container_width=True)
+                        st.plotly_chart(utm_content_bar(r3, top_n=top_n_3), width='stretch')
                         with st.expander("Ver tabela completa"):
-                            st.dataframe(r3, use_container_width=True, hide_index=True)
+                            st.dataframe(r3, width='stretch', hide_index=True)
 
             # ── Análise 4 — Primeira entrada → vendas ────────────────────────
             with an4:
@@ -909,9 +884,9 @@ with tab_analises:
                                 top_n_4t = st.slider("Top N tags", 5, min(30, len(by_tag)), min(20, len(by_tag)), key="top_n_4t") if len(by_tag) > 5 else len(by_tag)
                                 st.plotly_chart(
                                     first_entry_bar(by_tag, "tag_name", f"Primeira tag → compra de {_produto_label}", top_n=top_n_4t),
-                                    use_container_width=True,
+                                    width='stretch',
                                 )
-                                st.dataframe(by_tag, use_container_width=True, hide_index=True)
+                                st.dataframe(by_tag, width='stretch', hide_index=True)
 
                         with sub4b:
                             by_form = r4.get("by_form", pd.DataFrame())
@@ -921,9 +896,9 @@ with tab_analises:
                                 top_n_4f = st.slider("Top N formulários", 5, min(30, len(by_form)), min(20, len(by_form)), key="top_n_4f") if len(by_form) > 5 else len(by_form)
                                 st.plotly_chart(
                                     first_entry_bar(by_form, "lead_register_form", f"Formulário de origem → compra de {_produto_label}", top_n=top_n_4f),
-                                    use_container_width=True,
+                                    width='stretch',
                                 )
-                                st.dataframe(by_form, use_container_width=True, hide_index=True)
+                                st.dataframe(by_form, width='stretch', hide_index=True)
 
                         with sub4c:
                             st.caption(
@@ -976,7 +951,7 @@ with tab_analises:
                                     with ch1:
                                         st.plotly_chart(
                                             behavior_pie(r4c["behavior_counts"]),
-                                            use_container_width=True,
+                                            width='stretch',
                                         )
                                     with ch2:
                                         st.plotly_chart(
@@ -985,7 +960,7 @@ with tab_analises:
                                                 r4c["products_after"],
                                                 top_n=top_n_4c,
                                             ),
-                                            use_container_width=True,
+                                            width='stretch',
                                         )
 
                                     with st.expander("Ver tabela por lead"):
@@ -996,7 +971,7 @@ with tab_analises:
                                         ] if c in r4c["per_person"].columns]
                                         st.dataframe(
                                             r4c["per_person"][cols_4c],
-                                            use_container_width=True,
+                                            width='stretch',
                                             hide_index=True,
                                         )
 
@@ -1005,7 +980,7 @@ with tab_analises:
             # não apenas de display). produto e status vêm do session_state.
             with an5:
                 if _sem_leads:
-                    st.info("Necessário ter arquivo de leads carregado.")
+                    st.info("Necessário ter dados de leads disponíveis.")
                 else:
                     st.caption(
                         "Selecione a dimensão UTM e filtre os valores para ver leads e vendas por canal. "
@@ -1039,7 +1014,7 @@ with tab_analises:
                         st.warning("Nenhum resultado com os filtros selecionados.")
                     else:
                         top_n_5 = st.slider("Exibir top N", 5, min(50, len(r5)), min(20, len(r5)), key="top_n_5") if len(r5) > 5 else len(r5)
-                        st.plotly_chart(utm_funnel_bar(r5, utm_col=utm_dim, top_n=top_n_5), use_container_width=True)
+                        st.plotly_chart(utm_funnel_bar(r5, utm_col=utm_dim, top_n=top_n_5), width='stretch')
                         with st.expander("Ver tabela completa"):
-                            st.dataframe(r5, use_container_width=True, hide_index=True)
+                            st.dataframe(r5, width='stretch', hide_index=True)
 

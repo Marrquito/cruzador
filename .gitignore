@@ -39,3 +39,6 @@ desktop.ini
 
 # Examples
 *.example
+
+# Json 
+*.json
