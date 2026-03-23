@@ -23,6 +23,7 @@ from core.charts import (
     lead_to_purchase_all_bar, days_histogram, tags_distribution_bar, utm_content_bar,
     first_entry_bar, utm_funnel_bar,
     behavior_pie, products_before_after_bar,
+    buyer_tags_bar,
 )
 from core.cross_analyzer import (
     analysis_lead_to_purchase,
@@ -33,6 +34,7 @@ from core.cross_analyzer import (
     analysis_utm_funnel,
     analysis_behavior_around_tag,
     analysis_behavior_around_filter,
+    analysis_buyer_tags,
     get_utm_values,
 )
 
@@ -746,6 +748,9 @@ with tab_analises:
                     st.session_state["_an_r4"] = analysis_first_entry_to_sales(
                         df_leads, df_vendas, produto_analise, _status
                     )
+                    st.session_state["_an_r6"] = analysis_buyer_tags(
+                        df_leads, df_vendas, produto_analise, _status
+                    )
                     st.session_state["_an_produto"] = produto_analise
                     st.session_state["_an_status"] = _status
                     st.session_state["_an_ran"] = True
@@ -757,12 +762,13 @@ with tab_analises:
             _produto_label = st.session_state["_an_produto"]
             _status_cached = st.session_state["_an_status"]
 
-            an1, an2, an3, an4, an5 = st.tabs([
+            an1, an2, an3, an4, an5, an6 = st.tabs([
                 "⏱ Lead → Compra",
                 "🏷 Tags por comprador",
                 "📣 Anúncios (utm_content)",
                 "🚪 Primeira entrada → Venda",
                 "📡 Funil por UTM",
+                "🔖 Tags dos compradores",
             ])
 
             # ── Análise 1 — Tempo médio lead → compra ────────────────────────
@@ -1017,4 +1023,40 @@ with tab_analises:
                         st.plotly_chart(utm_funnel_bar(r5, utm_col=utm_dim, top_n=top_n_5), width='stretch')
                         with st.expander("Ver tabela completa"):
                             st.dataframe(r5, width='stretch', hide_index=True)
+
+            # ── Análise 6 — Tags dos compradores ─────────────────────────────
+            with an6:
+                if _sem_leads or _sem_vendas:
+                    st.info("Necessário ter leads e vendas carregados.")
+                else:
+                    r6 = st.session_state.get("_an_r6", {})
+                    if "error" in r6:
+                        st.error(r6["error"])
+                    elif r6.get("count", 0) == 0:
+                        st.warning("Nenhum comprador encontrado na base de leads para este produto.")
+                    else:
+                        total_compradores = r6["count"]
+                        df_tags = r6["df"]
+
+                        st.metric("Compradores encontrados na base de leads", f"{total_compradores:,}")
+                        st.caption(
+                            "Percentual calculado sobre o total de compradores únicos "
+                            "que aparecem na base de leads."
+                        )
+
+                        top_n_6 = st.slider(
+                            "Exibir top N tags", 5, min(50, len(df_tags)), min(30, len(df_tags)),
+                            key="top_n_6",
+                        ) if len(df_tags) > 5 else len(df_tags)
+
+                        st.plotly_chart(
+                            buyer_tags_bar(df_tags, _produto_label, top_n=top_n_6),
+                            width='stretch',
+                        )
+                        with st.expander("Ver tabela completa"):
+                            st.dataframe(
+                                df_tags.rename(columns={"tag_name": "Tag", "compradores": "Compradores", "pct": "%"}),
+                                width='stretch',
+                                hide_index=True,
+                            )
 

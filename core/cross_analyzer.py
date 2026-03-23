@@ -691,3 +691,51 @@ def get_utm_values(df_leads: pd.DataFrame, utm_col: str) -> list[str]:
         .unique()
         .tolist()
     )
+
+
+# ── Análise 6 — Tags mais comuns entre compradores ────────────────────────────
+
+def analysis_buyer_tags(
+    df_leads: pd.DataFrame,
+    df_vendas: pd.DataFrame,
+    product: str,
+    status: list[str] | None = None,
+) -> dict:
+    """
+    Para os compradores de `product`, calcula quais tags eles possuem
+    e com que frequência, retornando a contagem e % sobre o total de compradores.
+    """
+    if "tag_name" not in df_leads.columns:
+        return {"error": "Coluna 'tag_name' não encontrada nos leads."}
+    if "Nome do Produto" not in df_vendas.columns:
+        return {"error": "Coluna 'Nome do Produto' não encontrada nas vendas."}
+
+    dl = _prep_leads(df_leads)
+    dv = _prep_sales(df_vendas)
+
+    buyer_emails = _buyer_emails(dv, product, status)
+    if not buyer_emails:
+        return {"count": 0, "df": pd.DataFrame()}
+
+    # Leads que são compradores do produto
+    buyers_leads = dl[dl["_email_norm"].isin(buyer_emails) & (dl["_email_norm"] != "")]
+
+    total_buyers = buyers_leads["_email_norm"].nunique()
+    if total_buyers == 0:
+        return {"count": 0, "df": pd.DataFrame()}
+
+    # Conta compradores únicos por tag (um comprador pode ter a tag em múltiplas linhas)
+    tag_counts = (
+        buyers_leads[buyers_leads["tag_name"].notna()]
+        .groupby("tag_name")["_email_norm"]
+        .nunique()
+        .reset_index()
+        .rename(columns={"_email_norm": "compradores"})
+    )
+    tag_counts["pct"] = (tag_counts["compradores"] / total_buyers * 100).round(1)
+    tag_counts = tag_counts.sort_values("compradores", ascending=False).reset_index(drop=True)
+
+    return {
+        "count": total_buyers,
+        "df": tag_counts,
+    }

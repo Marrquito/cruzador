@@ -413,3 +413,36 @@ def products_before_after_bar(
         bargroupgap=0.05,
     )
     return fig
+
+
+# ── Chart tags dos compradores ─────────────────────────────────────────────────
+
+def buyer_tags_bar(df: pd.DataFrame, product: str, top_n: int = 30) -> go.Figure:
+    """
+    Barras horizontais mostrando as tags mais comuns entre os compradores
+    de um produto. Cada barra = % dos compradores que possuem aquela tag.
+    """
+    if df.empty:
+        return go.Figure()
+
+    df = df.head(top_n).copy()
+    df = df.sort_values("compradores", ascending=True)  # crescente para barras horizontais
+
+    fig = go.Figure(go.Bar(
+        x=df["pct"],
+        y=df["tag_name"],
+        orientation="h",
+        marker_color="#4C6EF5",
+        text=[f"{row['compradores']} ({row['pct']}%)" for _, row in df.iterrows()],
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        title=f"Tags mais comuns entre compradores de {product}",
+        xaxis_title="% dos compradores",
+        xaxis=dict(range=[0, min(df["pct"].max() * 1.25, 100)]),
+        margin=dict(l=20, r=80, t=60, b=20),
+        height=max(400, len(df) * 38 + 100),
+        bargap=0.15,
+    )
+    return fig
