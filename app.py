@@ -23,7 +23,7 @@ from core.charts import (
     lead_to_purchase_all_bar, days_histogram, tags_distribution_bar, utm_content_bar,
     first_entry_bar, utm_funnel_bar,
     behavior_pie, products_before_after_bar,
-    buyer_tags_bar,
+    buyer_tags_bar, utm_leads_bar,
 )
 from core.cross_analyzer import (
     analysis_lead_to_purchase,
@@ -584,6 +584,32 @@ with tab_leads:
             "Campanhas (utm_campaign)",
             f"{dl['utm_campaign'].nunique():,}" if "utm_campaign" in dl.columns else "—",
         )
+
+        # ── Gráficos UTM ───────────────────────────────────────────────────────
+        st.divider()
+        utm_available = [c for c in ["utm_medium", "utm_content", "utm_campaign", "utm_source"] if c in dl.columns]
+        if utm_available:
+            ug1, ug2, _ = st.columns([2, 1, 1])
+            with ug1:
+                utm_dim_l = st.selectbox("Dimensão UTM", utm_available, key="utm_dim_leads")
+            with ug2:
+                utm_top_n = st.slider("Top N", 5, 30, 15, key="utm_top_n_leads")
+
+            utm_email_col = "lead_email" if "lead_email" in dl.columns else None
+            if utm_dim_l and utm_email_col:
+                df_utm_chart = (
+                    dl[dl[utm_dim_l].notna() & (dl[utm_dim_l] != "")]
+                    .groupby(utm_dim_l)[utm_email_col]
+                    .nunique()
+                    .reset_index()
+                    .rename(columns={utm_email_col: "leads_unicos"})
+                    .sort_values("leads_unicos", ascending=False)
+                )
+                if not df_utm_chart.empty:
+                    st.plotly_chart(utm_leads_bar(df_utm_chart, utm_dim_l, top_n=utm_top_n), width="stretch")
+                else:
+                    st.info("Nenhum dado UTM para o filtro atual.")
+        st.divider()
 
         # ── Tabela ─────────────────────────────────────────────────────────────
         COLS_LEADS = [c for c in [

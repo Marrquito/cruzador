@@ -446,3 +446,34 @@ def buyer_tags_bar(df: pd.DataFrame, product: str, top_n: int = 30) -> go.Figure
         bargap=0.15,
     )
     return fig
+
+
+# ── Chart UTM → leads ─────────────────────────────────────────────────────────
+
+def utm_leads_bar(df: pd.DataFrame, utm_col: str, top_n: int = 20) -> go.Figure:
+    """
+    Barras horizontais com os valores de uma dimensão UTM que mais geram leads únicos.
+    df deve ter colunas [utm_col, 'leads_unicos'].
+    """
+    if df.empty:
+        return go.Figure()
+
+    df = df.head(top_n).sort_values("leads_unicos", ascending=True)
+
+    fig = go.Figure(go.Bar(
+        x=df["leads_unicos"],
+        y=df[utm_col],
+        orientation="h",
+        marker_color="#4DABF7",
+        text=df["leads_unicos"],
+        textposition="outside",
+    ))
+
+    fig.update_layout(
+        title=f"Top {top_n} valores de {utm_col} por leads únicos",
+        xaxis_title="Leads únicos",
+        margin=dict(l=20, r=60, t=60, b=20),
+        height=max(400, len(df) * 38 + 100),
+        bargap=0.15,
+    )
+    return fig
